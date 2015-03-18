@@ -1,0 +1,3 @@
+[submodule "colorama"]
+	path = colorama
+	url = git@github.com:liquiddandruff/colorama.git
