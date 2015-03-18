@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import re, os, sys, time
 from socket import *
+import colorama.colorama as CLR
+
+CLR.init()
 
 # START CLIENT CODE FROM HTTPWEBSERVER project1
 CONTENT_LENGTH_HEADER = "Content-Length: "
@@ -18,6 +21,32 @@ SERVER_PORT = 12000
 desiredHost = "localhost"
 
 print("Absolute cache dir: " + ABSOLUTE_CACHE_DIR)
+# create the cache directory
+if not os.path.exists(RELATIVE_CACHE_DIR):
+    os.makedirs(RELATIVE_CACHE_DIR)
+
+# text, color, text, color, ...
+def p(*args):
+    arglen = len(args)
+    if arglen % 2 != 0:
+        raise ValueError
+    elif arglen < 2:
+        print('')
+        return
+    else:
+        txt = args[0]
+        color = args[1].upper()
+        if color == "GREEN":
+            print(CLR.Fore.GREEN + txt + CLR.Fore.RESET, end = '')
+        elif color == "RED":
+            print(CLR.Fore.RED + txt + CLR.Fore.RESET, end = '')
+        elif color == "YELLOW":
+            print(CLR.Fore.YELLOW + txt + CLR.Fore.RESET, end = '')
+        elif color == "RESET":
+            print(CLR.Fore.RESET + txt, end = '')
+        else:
+            print(txt)
+        p(*args[2:])
 
 try:
     # Handle arguments
@@ -32,10 +61,10 @@ try:
     serverSocket.listen(10)
 except:
     print("""Wrong arguments. Usage:
-    python ProxyServer.py proxyserverIP proxyserverPort""")
+    python3 ProxyServer.py proxyserverIP proxyserverPort""")
     sys.exit();
 
-print("Server is listening...")
+p("Server is listening...", "GREEN")
 
 # Form the HTTP header response to be sent to the client
 def formHeaderResponse():
@@ -86,6 +115,18 @@ def formHomePageResponse():
     print("Sending content-header homepage response: " + repr(response + html))
     return (response + html).encode('utf-8')
 
+def parseFileOrHost(requestedSite):
+    lastSlashIndex = requestedSite.rfind("/")
+    parsedHost = ""
+    parsedFile = ""
+    # if last slash exists and is not first slash
+    if lastSlashIndex != -1 and lastSlashIndex != 0:
+        parsedFile = requestedSite[lastSlashIndex:]
+        parsedHost = requestedSite[:lastSlashIndex]
+    else:
+        parsedHost = requestedSite
+    return parsedHost, parsedFile
+
 try:
     # Main listen loop
     while True:
@@ -97,35 +138,40 @@ try:
         # Get the request type and file
         try:
             requestType = request.split()[0]
-            requestedFile = request.split()[1]
+            requestedSite = request.split()[1]
             # Only handle GET and HEAD request types
             if requestType != 'GET' and requestType != 'HEAD':
                 raise Exception;
-            print("\nIncoming request: " + repr(request))
+            p("\nIncoming request: ", "GREEN", repr(request), "YELLOW")
         except:
-            print("Malformed HTTP request; ignoring..")
+            p("Malformed HTTP request; ignoring..", "RED")
             continue
 
-        # Client requests the cache homepage, how curious!
-        if requestedFile == "/":
+        # Client requests the cache's homepage; how curious!
+        if requestedSite == "/":
             connectionSocket.send(formHomePageResponse())
             continue
 
-        print("Cache for page: " + repr(requestedFile))
+        p("Client requests cache of object: ", "GREEN", repr(requestedSite), "YELLOW")
+        parsedHost, parsedFile = parseFileOrHost(requestedSite)
+        p("Desired host: ", "GREEN", parsedHost, "YELLOW")
+        p("Desired file: ", "GREEN", parsedFile, "YELLOW")
         try:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
             # Open file in read-only, binary mode, trim /, in our cache at ABSOLUTE_CACHE_DIR
-            binaryFile = open(os.path.join(ABSOLUTE_CACHE_DIR, requestedFile[1:]), 'rb')
+            binaryFile = open(os.path.join(ABSOLUTE_CACHE_DIR, requestedSite[1:]), 'rb')
             print(" FOUND AT " + ABSOLUTE_CACHE_DIR)
             # If this is a GET request, try to send the contents of the file
             if requestType == 'GET':
                 data = binaryFile.read().decode('utf-8')
-                connectionSocket.send(formBinaryResponse(len(data), requestedFile))
+                connectionSocket.send(formBinaryResponse(len(data), requestedSite))
                 for i in range(0, len(data)):
                     connectionSocket.sendall(data[i].encode('utf-8'))
                     print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
 
                 contentLenStr = str(len(data))
-                print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedFile + " to client")
+                print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedSite + " to client")
             else:
                 # Otherwise, send the header only
                 connectionSocket.send(formHeaderResponse())
@@ -136,7 +182,7 @@ try:
         except IOError:
             # The file could not be found. Send 404 response
             print(" NOT FOUND AT " + ABSOLUTE_CACHE_DIR)
-            connectionSocket.send(form404Response(requestedFile, requestType == 'GET'))
+            connectionSocket.send(form404Response(requestedSite, requestType == 'GET'))
         finally:
             connectionSocket.close()
 except KeyboardInterrupt:
