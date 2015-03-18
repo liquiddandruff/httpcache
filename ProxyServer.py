@@ -38,6 +38,8 @@ def p(*args):
         color = args[1].upper()
         if color == "GREEN":
             print(CLR.Fore.GREEN + txt + CLR.Fore.RESET, end = '')
+        elif color == "BLUE":
+            print(CLR.Fore.BLUE + txt + CLR.Fore.RESET, end = '')
         elif color == "RED":
             print(CLR.Fore.RED + txt + CLR.Fore.RESET, end = '')
         elif color == "YELLOW":
@@ -127,6 +129,10 @@ def parseFileOrHost(requestedSite):
         parsedHost = requestedSite
     return parsedHost, parsedFile
 
+def cacheExists(parsedHost, parsedFile):
+
+def cacheDoesNotExist(parsedHost, parsedFile):
+
 try:
     # Main listen loop
     while True:
@@ -142,7 +148,7 @@ try:
             # Only handle GET and HEAD request types
             if requestType != 'GET' and requestType != 'HEAD':
                 raise Exception;
-            p("\nIncoming request: ", "GREEN", repr(request), "YELLOW")
+            p("\nIncoming request: ", "BLUE", repr(request), "YELLOW")
         except:
             p("Malformed HTTP request; ignoring..", "RED")
             continue
@@ -152,13 +158,21 @@ try:
             connectionSocket.send(formHomePageResponse())
             continue
 
-        p("Client requests cache of object: ", "GREEN", repr(requestedSite), "YELLOW")
+        p("Client requests cache of object: ", "BLUE", repr(requestedSite), "YELLOW")
         parsedHost, parsedFile = parseFileOrHost(requestedSite)
-        p("Desired host: ", "GREEN", parsedHost, "YELLOW")
-        p("Desired file: ", "GREEN", parsedFile, "YELLOW")
+        p("Requested host: ", "BLUE", parsedHost, "YELLOW")
+        p("Requested file: ", "BLUE", parsedFile, "YELLOW")
         try:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+            # lstrip to assure python this is a relative dir
+            desiredCacheDir = os.path.join(RELATIVE_CACHE_DIR, parsedHost.lstrip('/'))
+            p("Requested cache dir: /", "BLUE", desiredCacheDir, "YELLOW")
+            if not os.path.exists(desiredCacheDir):
+                p("Does not exist in our cache; creating it now..", "RED")
+                os.makedirs(desiredCacheDir)
+                cacheDoesNotExist()
+            else:
+                p("Exists in our cache...", "GREEN")
+                cacheExists()
             # Open file in read-only, binary mode, trim /, in our cache at ABSOLUTE_CACHE_DIR
             binaryFile = open(os.path.join(ABSOLUTE_CACHE_DIR, requestedSite[1:]), 'rb')
             print(" FOUND AT " + ABSOLUTE_CACHE_DIR)
