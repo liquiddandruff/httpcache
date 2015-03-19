@@ -20,11 +20,6 @@ SERVER_PORT = 12000
 
 desiredHost = "localhost"
 
-print("Absolute cache dir: " + ABSOLUTE_CACHE_DIR)
-# create the cache directory
-if not os.path.exists(RELATIVE_CACHE_DIR):
-    os.makedirs(RELATIVE_CACHE_DIR)
-
 # text, color, text, color, ...
 def p(*args):
     arglen = len(args)
@@ -50,23 +45,6 @@ def p(*args):
             print(txt)
         p(*args[2:])
 
-try:
-    # Handle arguments
-    SERVER_HOST = sys.argv[1]
-    SERVER_PORT = int(sys.argv[2])
-    serverSocket = socket(AF_INET, SOCK_STREAM)
-    # Reuse local addresses
-    serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-    # Bind to all interfaces (for now)
-    serverSocket.bind(('0.0.0.0', SERVER_PORT))
-    # Maximum 10 clients
-    serverSocket.listen(10)
-except:
-    print("""Wrong arguments. Usage:
-    python3 ProxyServer.py proxyserverIP proxyserverPort""")
-    sys.exit();
-
-p("Server is listening...", "GREEN")
 
 # Form the HTTP header response to be sent to the client
 def formHeaderResponse():
@@ -127,89 +105,130 @@ def parseFileOrHost(requestedSite):
         parsedHost = requestedSite[:lastSlashIndex]
     else:
         parsedHost = requestedSite
-    return parsedHost, parsedFile
+    # lstrip to assure python that these are a relative dirs
+    return parsedHost.lstrip("/"), parsedFile.lstrip("/")
 
-def cacheExists(parsedHost, parsedFile):
+def cacheExists(cacheDir, parsedFile):
+    try:
+        # Open file in read-only, binary mode, trim /, in the cache 
+        path = os.path.join(cacheDir, parsedFile)
+        p("The path: " + path, "RED")
+        binaryFile = open(os.path.join(cacheDir, parsedFile), 'rb')
+        print(" FOUND AT " + ABSOLUTE_CACHE_DIR)
+        # If this is a GET request, try to send the contents of the file
+        if requestType == 'GET':
+            data = binaryFile.read().decode('utf-8')
+            connectionSocket.send(formBinaryResponse(len(data), requestedSite))
+            for i in range(0, len(data)):
+                connectionSocket.sendall(data[i].encode('utf-8'))
+                print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
 
-def cacheDoesNotExist(parsedHost, parsedFile):
+            contentLenStr = str(len(data))
+            print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedSite + " to client")
+        else:
+            # Otherwise, send the header only
+            connectionSocket.send(formHeaderResponse())
+        binaryFile.close()
+    except ConnectionError as e:
+        # Ignore if client crashes
+        print(str(e) + ": Client probably exploded, RIP")
+    except IOError:
+        # The file could not be found. Send 404 response
+        print(" NOT FOUND AT " + ABSOLUTE_CACHE_DIR)
+        connectionSocket.send(form404Response(requestedSite, requestType == 'GET'))
+    finally:
+        connectionSocket.close()
+    return ""
 
-try:
-    # Main listen loop
-    while True:
-        connectionSocket, addr = serverSocket.accept()
-        request = connectionSocket.recv(BYTES_TO_RECEIVE).decode('utf-8')
-        if not request:
-            continue
+def cacheObjDoesNotExist(parsedHost, parsedFile, cacheDir):
+    p("Requested cache object does not exist; requesting it now from origin..", "RED")
+    server2server(parsedHost, 80, "GET", parsedFile, cacheDir)
+    return ""
 
-        # Get the request type and file
-        try:
-            requestType = request.split()[0]
-            requestedSite = request.split()[1]
-            # Only handle GET and HEAD request types
-            if requestType != 'GET' and requestType != 'HEAD':
-                raise Exception;
-            p("\nIncoming request: ", "BLUE", repr(request), "YELLOW")
-        except:
-            p("Malformed HTTP request; ignoring..", "RED")
-            continue
+def run():
+    print("Absolute cache dir: " + ABSOLUTE_CACHE_DIR)
+    # create the cache directory
+    if not os.path.exists(RELATIVE_CACHE_DIR):
+        os.makedirs(RELATIVE_CACHE_DIR)
 
-        # Client requests the cache's homepage; how curious!
-        if requestedSite == "/":
-            connectionSocket.send(formHomePageResponse())
-            continue
+    try:
+        # Handle arguments
+        SERVER_HOST = sys.argv[1]
+        SERVER_PORT = int(sys.argv[2])
+        serverSocket = socket(AF_INET, SOCK_STREAM)
+        # Reuse local addresses
+        serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        # Bind to all interfaces (for now)
+        serverSocket.bind(('0.0.0.0', SERVER_PORT))
+        # Maximum 10 clients
+        serverSocket.listen(10)
+    except:
+        print("""Wrong arguments. Usage:
+        python3 ProxyServer.py proxyserverIP proxyserverPort""")
+        sys.exit();
 
-        p("Client requests cache of object: ", "BLUE", repr(requestedSite), "YELLOW")
-        parsedHost, parsedFile = parseFileOrHost(requestedSite)
-        p("Requested host: ", "BLUE", parsedHost, "YELLOW")
-        p("Requested file: ", "BLUE", parsedFile, "YELLOW")
-        try:
-            # lstrip to assure python this is a relative dir
-            desiredCacheDir = os.path.join(RELATIVE_CACHE_DIR, parsedHost.lstrip('/'))
-            p("Requested cache dir: /", "BLUE", desiredCacheDir, "YELLOW")
+    p("Server is listening...", "GREEN")
+
+    try:
+        # Main listen loop
+        while True:
+            connectionSocket, addr = serverSocket.accept()
+            request = connectionSocket.recv(BYTES_TO_RECEIVE).decode('utf-8')
+            if not request:
+                continue
+
+            # Get the request type and file
+            try:
+                requestType = request.split()[0]
+                requestedSite = request.split()[1]
+                # Only handle GET and HEAD request types
+                if requestType != 'GET' and requestType != 'HEAD':
+                    raise Exception;
+                p("\nIncoming request: ", "BLUE", repr(request), "YELLOW")
+            except:
+                p("Malformed HTTP request; ignoring..", "RED")
+                continue
+
+            # Client requests the cache's homepage; how curious!
+            if requestedSite == "/":
+                connectionSocket.send(formHomePageResponse())
+                continue
+
+            p("Client requests cache of object: ", "BLUE", requestedSite, "YELLOW")
+            parsedHost, parsedFile = parseFileOrHost(requestedSite)
+            desiredCacheDir = os.path.join(RELATIVE_CACHE_DIR, parsedHost)
+            desiredCacheObj = os.path.join(desiredCacheDir, parsedFile)
+            p("Requested host: ", "BLUE", parsedHost, "YELLOW")
+            p("Requested file: ", "BLUE", parsedFile, "YELLOW")
+            p("Requested cache dir: ", "BLUE", desiredCacheDir, "YELLOW")
+            p("Requested cache file: ", "BLUE", os.path.join(desiredCacheDir, parsedFile), "YELLOW")
             if not os.path.exists(desiredCacheDir):
-                p("Does not exist in our cache; creating it now..", "RED")
+                p("Requested cache dir does not exist; creating it now...", "RED")
                 os.makedirs(desiredCacheDir)
-                cacheDoesNotExist()
+                if os.path.exists(desiredCacheObj):
+                    p("This shouldn't happen, LOL", "RED")
+                else:
+                    cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
             else:
-                p("Exists in our cache...", "GREEN")
-                cacheExists()
-            # Open file in read-only, binary mode, trim /, in our cache at ABSOLUTE_CACHE_DIR
-            binaryFile = open(os.path.join(ABSOLUTE_CACHE_DIR, requestedSite[1:]), 'rb')
-            print(" FOUND AT " + ABSOLUTE_CACHE_DIR)
-            # If this is a GET request, try to send the contents of the file
-            if requestType == 'GET':
-                data = binaryFile.read().decode('utf-8')
-                connectionSocket.send(formBinaryResponse(len(data), requestedSite))
-                for i in range(0, len(data)):
-                    connectionSocket.sendall(data[i].encode('utf-8'))
-                    print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
+                p("Requested cache dir exists; looking around...", "GREEN")
+                if os.path.exists(desiredCacheObj):
+                    p("Requested object exists in our cache; fetching it now from cache...", "GREEN")
+                    cacheExists(desiredCacheDir, parsedFile)
+                else:
+                    cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
 
-                contentLenStr = str(len(data))
-                print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedSite + " to client")
-            else:
-                # Otherwise, send the header only
-                connectionSocket.send(formHeaderResponse())
-            binaryFile.close()
-        except ConnectionError as e:
-            # Ignore if client crashes
-            print(str(e) + ": Client probably exploded, RIP")
-        except IOError:
-            # The file could not be found. Send 404 response
-            print(" NOT FOUND AT " + ABSOLUTE_CACHE_DIR)
-            connectionSocket.send(form404Response(requestedSite, requestType == 'GET'))
-        finally:
-            connectionSocket.close()
-except KeyboardInterrupt:
-    print("\n^C Detected: Terminating gracefully")
-finally:
-    print("Server socket closed")
-    serverSocket.close()
+    except KeyboardInterrupt:
+        print("\n^C Detected: Terminating gracefully")
+    finally:
+        print("Server socket closed")
+        serverSocket.close()
 
 # START CLIENT CODE FROM HTTPWEBSERVER project1
 
 # Form the HTTP request to be sent to the server
-def formRequest(req_type, req_name):
-    response = (req_type + " /" + req_name + " HTTP/1.1"+2*CRLF)
+def formRequest(req_type, req_host, req_file):
+    response = (req_type + " /" + req_file + " HTTP/1.1"+2*CRLF
+                + "Host: " + req_host + 2*CRLF)
     print("Sending request: " + repr(response))
     return (response).encode('utf-8')
 
@@ -224,7 +243,7 @@ def getContentLength(headers):
     return int(headers[leftIndex:rightIndex])
 
 # Listen for and only return HTTP headers from server
-def getHeaders():
+def getHeaders(clientSocket):
     rcvBuffer = ""
     httpHeaders = ""
     while True:
@@ -242,7 +261,7 @@ def getHeaders():
             rcvBuffer = rcvBuffer[2 + lastCRLFindex:]
 
 # Listen for and only return content from server
-def getContent(rcvBuffer, cl):
+def getContent(clientSocket, rcvBuffer, cl):
     contentBuffer = rcvBuffer
     if len(contentBuffer) >= cl:
         return contentBuffer
@@ -254,60 +273,69 @@ def getContent(rcvBuffer, cl):
         if len(contentBuffer) >= cl:
             return contentBuffer
 
-def s2sTo(_host, _port):
+def server2server(_host, _port, request_type, _file, dest):
+    # format _host properly
+    _host = "www." + _host if _host.find("www.") == -1 else _host
+    p(_host + " " + str(_port) + " " + request_type + dest, "GREEN")
+    clientSocket = ""
     try:
         # Create a socket of our own to retrieve and cache files from webservers for clients
         clientSocket = socket(AF_INET, SOCK_STREAM)
         # Gracefully handle timeouts
         clientSocket.settimeout(TIME_OUT_LIMIT)
-        clientSocket.connect((_host, server_port))
-    except timeout:
-        print("Timed out. Is " + _host + " reachable?")
-    except ConnectionRefusedError:
-        print("Connection refused. Is " + _host + " reachable?")
-    except:
-        print("Failed to connect to " + _host)
-    finally:
-        return
+        clientSocket.connect((_host, _port))
+        print("Connected to " + _host + " on port 80")
+        clientSocket.send(formRequest(request_type, _host, _file))
+        print("Client's request has been forwarded. Awaiting response...")
 
-    print("Connected to " + _host + " on port 80\n")
-    clientSocket.send(formRequest(request_type, file_name))
-    print("Client's request has been forwarded. Awaiting response...\n")
+        try:
+            headers, rcvBuffer = getHeaders(clientSocket)
+            responseCode = headers.split()[1]
 
-    try:
-        headers, rcvBuffer = getHeaders()
-        responseCode = headers.split()[1]
+            p("server2server headers: " + headers, "RED")
+            p("server2server content: " + getContent(clientSocket, rcvBuffer, getContentLength(headers)), "BLUE")
 
-        if responseCode == '200':
-            if request_type == 'GET':
+            if responseCode == '404':
+                print("Response code 404 received: " + repr(headers + getContent(clientSocket, rcvBuffer, getContentLength(headers)) + "\n"))
+            #elif responseCode == '404':
+            else:
                 info = ""
                 try:
                     print("Response code 200 received: " + repr(headers)  + "\nDownloading file...")
-                    content = getContent(rcvBuffer, getContentLength(headers))
+                    content = getContent(clientSocket, rcvBuffer, getContentLength(headers))
                     info = "File successfully downloaded to "
                 except timeout:
                     # Timing out shouldn't happen, but if it does, continue anyways
                     info = "File partially downloaded due to timeout; writing file anyways to "
                 finally:
-                    # Write the received content to file
-                    with open(os.path.join(SCRIPT_LOCATION, FILE_NAME_PREPEND + file_name), 'wb') as binaryFile:
+                    # Write the received contents to file
+                    with open(dest, 'wb') as binaryFile:
                         binaryFile.write(content.encode('utf-8'))
-                        print(info + FILE_NAME_PREPEND + file_name + ": " + repr(content) + '\n')
-            elif request_type == 'HEAD':
-                print("Response code 200 (TRUE) received: " + repr(headers) + "\n")
-        elif responseCode == '404':
-            if request_type == 'GET':
-                print("Response code 404 received: " + repr(headers + getContent(rcvBuffer, getContentLength(headers)) + "\n"))
-            elif request_type == 'HEAD':
-                print("Response code 404 received: " + repr(headers) + "\n")
+                        print(info + dest + ": " + repr(content) + '\n')
+        except timeout:
+            print("\nTimed out. Exiting")
+        except (ValueError, IndexError):
+            print("\nReceived malformed headers. Exiting")
+        except KeyboardInterrupt:
+            print("\n^C Detected. Terminating gracefully")
+        except Exception as e:
+            print("Final exception: " + str(e))
+        finally:
+            print("Client socket closed")
+            clientSocket.close()
     except timeout:
-        print("\nTimed out. Exiting")
-    except (ValueError, IndexError):
-        print("\nReceived malformed headers. Exiting")
-    except KeyboardInterrupt:
-        print("\n^C Detected. Terminating gracefully")
+        print("Timed out. Is " + _host + " reachable?")
+    except ConnectionRefusedError:
+        print("Connection refused. Is " + _host + " reachable?")
+    except Exception as e:
+        print("Failed to connect to " + _host + ": " + str(e))
     finally:
-        print("Client socket closed")
-        clientSocket.close()
+        p("return?", "RED")
+        return
+
 
 # END CLIENT CODE FROM HTTPWEBSERVER project1
+
+if __name__ == "__main__":
+    run()
+
