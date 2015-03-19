@@ -108,26 +108,25 @@ def parseFileOrHost(requestedSite):
     # lstrip to assure python that these are a relative dirs
     return parsedHost.lstrip("/"), parsedFile.lstrip("/")
 
-def cacheExists(cacheDir, parsedFile):
+def cacheExists(clientSocket, cacheDir, parsedFile):
     try:
         # Open file in read-only, binary mode, trim /, in the cache 
         path = os.path.join(cacheDir, parsedFile)
         p("The path: " + path, "RED")
         binaryFile = open(os.path.join(cacheDir, parsedFile), 'rb')
-        print(" FOUND AT " + ABSOLUTE_CACHE_DIR)
         # If this is a GET request, try to send the contents of the file
         if requestType == 'GET':
             data = binaryFile.read().decode('utf-8')
-            connectionSocket.send(formBinaryResponse(len(data), requestedSite))
+            clientSocket.send(formBinaryResponse(len(data), requestedSite))
             for i in range(0, len(data)):
-                connectionSocket.sendall(data[i].encode('utf-8'))
+                clientSocket.sendall(data[i].encode('utf-8'))
                 print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
 
             contentLenStr = str(len(data))
             print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedSite + " to client")
         else:
             # Otherwise, send the header only
-            connectionSocket.send(formHeaderResponse())
+            clientSocket.send(formHeaderResponse())
         binaryFile.close()
     except ConnectionError as e:
         # Ignore if client crashes
@@ -135,13 +134,13 @@ def cacheExists(cacheDir, parsedFile):
     except IOError:
         # The file could not be found. Send 404 response
         print(" NOT FOUND AT " + ABSOLUTE_CACHE_DIR)
-        connectionSocket.send(form404Response(requestedSite, requestType == 'GET'))
+        clientSocket.send(form404Response(requestedSite, requestType == 'GET'))
     finally:
-        connectionSocket.close()
+        clientSocket.close()
     return ""
 
 def cacheObjDoesNotExist(parsedHost, parsedFile, cacheDir):
-    p("Requested cache object does not exist; requesting it now from origin..", "RED")
+    p("Requested cache dir exists but cache object does not exist; requesting it now from origin..", "RED")
     server2server(parsedHost, 80, "GET", parsedFile, cacheDir)
     return ""
 
@@ -212,8 +211,8 @@ def run():
             else:
                 p("Requested cache dir exists; looking around...", "GREEN")
                 if os.path.exists(desiredCacheObj):
-                    p("Requested object exists in our cache; fetching it now from cache...", "GREEN")
-                    cacheExists(desiredCacheDir, parsedFile)
+                    p("Requested object exists in our cache; fetching it now...", "GREEN")
+                    cacheExists(connectionSocket, desiredCacheDir, parsedFile)
                 else:
                     cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
 
@@ -273,10 +272,10 @@ def getContent(clientSocket, rcvBuffer, cl):
         if len(contentBuffer) >= cl:
             return contentBuffer
 
-def server2server(_host, _port, request_type, _file, dest):
+def server2server(_host, _port, request_type, _file, destCacheFolder):
     # format _host properly
     _host = "www." + _host if _host.find("www.") == -1 else _host
-    p(_host + " " + str(_port) + " " + request_type + dest, "GREEN")
+    p(_host + " " + str(_port) + " " + request_type + " " + destCacheFolder, "GREEN")
     clientSocket = ""
     try:
         # Create a socket of our own to retrieve and cache files from webservers for clients
@@ -301,7 +300,7 @@ def server2server(_host, _port, request_type, _file, dest):
             else:
                 info = ""
                 try:
-                    print("Response code 200 received: " + repr(headers)  + "\nDownloading file...")
+                    print("Response code " + responseCode + " received: " + repr(headers)  + "\nDownloading file...")
                     content = getContent(clientSocket, rcvBuffer, getContentLength(headers))
                     info = "File successfully downloaded to "
                 except timeout:
@@ -309,9 +308,10 @@ def server2server(_host, _port, request_type, _file, dest):
                     info = "File partially downloaded due to timeout; writing file anyways to "
                 finally:
                     # Write the received contents to file
-                    with open(dest, 'wb') as binaryFile:
+                    target = os.path.join(destCacheFolder, _file)
+                    with open(target, 'wb') as binaryFile:
                         binaryFile.write(content.encode('utf-8'))
-                        print(info + dest + ": " + repr(content) + '\n')
+                        print(info + target + ": " + repr(content) + '\n')
         except timeout:
             print("\nTimed out. Exiting")
         except (ValueError, IndexError):
