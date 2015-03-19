@@ -299,18 +299,18 @@ def server2server(_host, _port, request_type, _file, destCacheFolder):
         try:
             headers, rcvBuffer = getHeaders(clientSocket)
             responseCode = headers.split()[1]
-
+            recvdContents = getContent(clientSocket, rcvBuffer, getContentLength(headers))
             p("server2server headers: " + headers, "RED")
-            p("server2server content: " + getContent(clientSocket, rcvBuffer, getContentLength(headers)), "BLUE")
+            p("server2server content: " + recvdContents, "BLUE")
 
             if responseCode == '404':
-                print("Response code 404 received: " + repr(headers + getContent(clientSocket, rcvBuffer, getContentLength(headers)) + "\n"))
+                print("Response code 404 received: " + repr(headers + recvdContents + "\n"))
             #elif responseCode == '404':
             else:
                 info = ""
                 try:
                     print("Response code " + responseCode + " received: " + repr(headers)  + "\nDownloading file...")
-                    content = getContent(clientSocket, rcvBuffer, getContentLength(headers))
+                    content = recvdContents
                     info = "File successfully downloaded to "
                 except timeout:
                     # Timing out shouldn't happen, but if it does, continue anyways
