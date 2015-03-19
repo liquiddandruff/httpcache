@@ -67,6 +67,14 @@ def formBinaryResponse(bfLength, bfName):
     print("Sending content-header response 200: " + repr(response))
     return response.encode('utf-8')
 
+def formContentResponse(content):
+    response = ("HTTP/1.1 200 OK\r\n"
+                "Keep-Alive: timeout=10, max=100\r\n"
+                "Content-Length: " + str(len(content)) + "\r\n"
+                "Content-Type: text/html\r\n\r\n")
+    print("Sending content-header homepage response: " + repr(response + content))
+    return (response + content).encode('utf-8')
+
 # Form the HTTP 404 response to be sent to the client
 def form404Response(rf, isGetRequest):
     html = ("<center>Error 404: File not found!<br>"
@@ -108,7 +116,8 @@ def parseFileOrHost(requestedSite):
     # lstrip to assure python that these are a relative dirs
     return parsedHost.lstrip("/"), parsedFile.lstrip("/")
 
-def cacheExists(clientSocket, cacheDir, parsedFile):
+def cacheExists(clientSocket, cacheDir, parsedHost, parsedFile):
+    requestType = "GET"
     try:
         # Open file in read-only, binary mode, trim /, in the cache 
         path = os.path.join(cacheDir, parsedFile)
@@ -117,13 +126,13 @@ def cacheExists(clientSocket, cacheDir, parsedFile):
         # If this is a GET request, try to send the contents of the file
         if requestType == 'GET':
             data = binaryFile.read().decode('utf-8')
-            clientSocket.send(formBinaryResponse(len(data), requestedSite))
+            clientSocket.send(formContentResponse(data))
             for i in range(0, len(data)):
                 clientSocket.sendall(data[i].encode('utf-8'))
                 print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
 
             contentLenStr = str(len(data))
-            print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + requestedSite + " to client")
+            print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + parsedHost + " to client")
         else:
             # Otherwise, send the header only
             clientSocket.send(formHeaderResponse())
@@ -134,7 +143,7 @@ def cacheExists(clientSocket, cacheDir, parsedFile):
     except IOError:
         # The file could not be found. Send 404 response
         print(" NOT FOUND AT " + ABSOLUTE_CACHE_DIR)
-        clientSocket.send(form404Response(requestedSite, requestType == 'GET'))
+        clientSocket.send(form404Response(parsedHost, requestType == 'GET'))
     finally:
         clientSocket.close()
     return ""
@@ -171,8 +180,8 @@ def run():
     try:
         # Main listen loop
         while True:
-            connectionSocket, addr = serverSocket.accept()
-            request = connectionSocket.recv(BYTES_TO_RECEIVE).decode('utf-8')
+            clientSocket, addr = serverSocket.accept()
+            request = clientSocket.recv(BYTES_TO_RECEIVE).decode('utf-8')
             if not request:
                 continue
 
@@ -190,7 +199,7 @@ def run():
 
             # Client requests the cache's homepage; how curious!
             if requestedSite == "/":
-                connectionSocket.send(formHomePageResponse())
+                clientSocket.send(formHomePageResponse())
                 continue
 
             p("Client requests cache of object: ", "BLUE", requestedSite, "YELLOW")
@@ -212,7 +221,7 @@ def run():
                 p("Requested cache dir exists; looking around...", "GREEN")
                 if os.path.exists(desiredCacheObj):
                     p("Requested object exists in our cache; fetching it now...", "GREEN")
-                    cacheExists(connectionSocket, desiredCacheDir, parsedFile)
+                    cacheExists(clientSocket, desiredCacheDir, parsedHost, parsedFile)
                 else:
                     cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
 
