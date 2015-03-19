@@ -78,7 +78,7 @@ def formContentResponse(content):
 # Form the HTTP 404 response to be sent to the client
 def form404Response(rf, isGetRequest):
     html = ("<center>Error 404: File not found!<br>"
-            "You have requested for a non existing file: <b>" + rf + "</b><br><br>"
+            "You have requested for a non existing file from the origin server: <b>" + rf + "</b><br><br>"
             "Please try another file</center>")
     response = ("HTTP/1.1 404 Not Found\r\n"
                 "Keep-Alive: timeout=10, max=100\r\n"
@@ -105,18 +105,13 @@ def formHomePageResponse():
 
 def parseFileOrHost(requestedSite):
     lastSlashIndex = requestedSite.rfind("/")
-    parsedHost = ""
-    parsedFile = ""
-    # if last slash exists and is not first slash
-    if lastSlashIndex != -1 and lastSlashIndex != 0:
-        parsedFile = requestedSite[lastSlashIndex:]
-        parsedHost = requestedSite[:lastSlashIndex]
-    else:
-        parsedHost = requestedSite
+    firstSlashIndex = requestedSite.find("/")
+    parsedFile = "index.html" if (lastSlashIndex == -1 or lastSlashIndex < firstSlashIndex) else requestedSite[lastSlashIndex:]
+    parsedHost = requestedSite if (firstSlashIndex == -1 or firstSlashIndex > lastSlashIndex) else requestedSite[:firstSlashIndex]
     # lstrip to assure python that these are a relative dirs
     return parsedHost.lstrip("/"), parsedFile.lstrip("/")
 
-def cacheExists(clientSocket, cacheDir, parsedHost, parsedFile):
+def cacheExists(clientSocket, parsedHost, parsedFile, cacheDir):
     requestType = "GET"
     try:
         # Open file in read-only, binary mode, trim /, in the cache 
@@ -129,10 +124,9 @@ def cacheExists(clientSocket, cacheDir, parsedHost, parsedFile):
             clientSocket.send(formContentResponse(data))
             for i in range(0, len(data)):
                 clientSocket.sendall(data[i].encode('utf-8'))
-                print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
-
+                #print("Sending byte " + str(i + 1) + ": " + repr(data[i]))
             contentLenStr = str(len(data))
-            print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of ." + parsedHost + " to client")
+            print("Finished sending " + contentLenStr + "/" + contentLenStr + " bytes of " + parsedHost + " to client")
         else:
             # Otherwise, send the header only
             clientSocket.send(formHeaderResponse())
@@ -146,12 +140,14 @@ def cacheExists(clientSocket, cacheDir, parsedHost, parsedFile):
         clientSocket.send(form404Response(parsedHost, requestType == 'GET'))
     finally:
         clientSocket.close()
-    return ""
 
-def cacheObjDoesNotExist(parsedHost, parsedFile, cacheDir):
+def cacheObjDoesNotExist(clientSocket, parsedHost, parsedFile, cacheDir):
     p("Requested cache dir exists but cache object does not exist; requesting it now from origin..", "RED")
-    server2server(parsedHost, 80, "GET", parsedFile, cacheDir)
-    return ""
+    response = server2server(parsedHost, 80, "GET", parsedFile, cacheDir)
+    if response == "404":
+        clientSocket.send(form404Response(parsedHost, True))
+        return
+    cacheExists(clientSocket, parsedHost, parsedFile, cacheDir)
 
 def run():
     print("Absolute cache dir: " + ABSOLUTE_CACHE_DIR)
@@ -203,7 +199,7 @@ def run():
                 continue
 
             p("Client requests cache of object: ", "BLUE", requestedSite, "YELLOW")
-            parsedHost, parsedFile = parseFileOrHost(requestedSite)
+            parsedHost, parsedFile = parseFileOrHost(requestedSite[1:])
             desiredCacheDir = os.path.join(RELATIVE_CACHE_DIR, parsedHost)
             desiredCacheObj = os.path.join(desiredCacheDir, parsedFile)
             p("Requested host: ", "BLUE", parsedHost, "YELLOW")
@@ -216,14 +212,14 @@ def run():
                 if os.path.exists(desiredCacheObj):
                     p("This shouldn't happen, LOL", "RED")
                 else:
-                    cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
+                    cacheObjDoesNotExist(clientSocket, parsedHost, parsedFile, desiredCacheDir)
             else:
                 p("Requested cache dir exists; looking around...", "GREEN")
                 if os.path.exists(desiredCacheObj):
                     p("Requested object exists in our cache; fetching it now...", "GREEN")
-                    cacheExists(clientSocket, desiredCacheDir, parsedHost, parsedFile)
+                    cacheExists(clientSocket, parsedHost, parsedFile, desiredCacheDir)
                 else:
-                    cacheObjDoesNotExist(parsedHost, parsedFile, desiredCacheDir)
+                    cacheObjDoesNotExist(clientSocket, parsedHost, parsedFile, desiredCacheDir)
 
     except KeyboardInterrupt:
         print("\n^C Detected: Terminating gracefully")
@@ -256,6 +252,7 @@ def getHeaders(clientSocket):
     httpHeaders = ""
     while True:
         response = clientSocket.recv(BYTES_TO_RECEIVE).decode('utf-8')
+        print(response)
         if not response:
             continue
         rcvBuffer += response;
@@ -305,6 +302,7 @@ def server2server(_host, _port, request_type, _file, destCacheFolder):
 
             if responseCode == '404':
                 print("Response code 404 received: " + repr(headers + recvdContents + "\n"))
+                return "404"
             #elif responseCode == '404':
             else:
                 info = ""
@@ -339,9 +337,7 @@ def server2server(_host, _port, request_type, _file, destCacheFolder):
     except Exception as e:
         print("Failed to connect to " + _host + ": " + str(e))
     finally:
-        p("return?", "RED")
-        return
-
+        p("Finish server to server request", "BLUE")
 
 # END CLIENT CODE FROM HTTPWEBSERVER project1
 
